@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "AI / REAL Instant Forensics",
+  "version": "0.2.0",
+  "description": "Run AI image forensics on images in your browser.",
+  "permissions": ["contextMenus", "activeTab", "scripting", "storage"],
+  "host_permissions": ["http://localhost:8000/*", "https://*/*", "http://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "Run AI forensics" },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle" }]
+}
