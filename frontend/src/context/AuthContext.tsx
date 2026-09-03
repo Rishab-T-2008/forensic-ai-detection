@@ -23,6 +23,9 @@ interface AuthContextType {
   closePlanModal: () => void;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, full_name: string, organization?: string) => Promise<void>;
+  loginWithOAuth: (provider: "google" | "apple" | "x", payload?: { email?: string; full_name?: string; provider_id?: string }) => Promise<void>;
+  sendPhoneOtp: (phoneNumber: string) => Promise<{ status: string; message: string; demo_otp?: string }>;
+  verifyPhoneOtp: (phoneNumber: string, otpCode: string, fullName?: string) => Promise<void>;
   updatePlan: (planId: "starter" | "pro" | "enterprise") => Promise<void>;
   logout: () => void;
   pendingReviewAction: (() => void) | null;
@@ -49,7 +52,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (savedToken && savedUser) {
         setToken(savedToken);
         setUser(JSON.parse(savedUser));
-        // Verify with backend silently
         fetch(`${backendUrl}/api/v1/auth/me`, {
           headers: { Authorization: `Bearer ${savedToken}` },
         })
@@ -67,6 +69,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  function handleSuccessfulAuth(newToken: string, newUser: UserProfile) {
+    setToken(newToken);
+    setUser(newUser);
+    localStorage.setItem(STORAGE_TOKEN_KEY, newToken);
+    localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(newUser));
+    setIsAuthModalOpen(false);
+    setIsPlanModalOpen(true);
+  }
+
   async function login(email: string, password: string) {
     const res = await fetch(`${backendUrl}/api/v1/auth/login`, {
       method: "POST",
@@ -78,16 +89,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(data?.detail || "Invalid email or password");
     }
     const data = await res.json();
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem(STORAGE_TOKEN_KEY, data.token);
-    localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(data.user));
-    setIsAuthModalOpen(false);
-
-    // If there is a pending review, open the plan choosing screen
-    if (pendingReviewAction) {
-      setIsPlanModalOpen(true);
-    }
+    handleSuccessfulAuth(data.token, data.user);
   }
 
   async function signup(email: string, password: string, full_name: string, organization?: string) {
@@ -106,14 +108,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(data?.detail || "Failed to create account");
     }
     const data = await res.json();
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem(STORAGE_TOKEN_KEY, data.token);
-    localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(data.user));
-    setIsAuthModalOpen(false);
+    handleSuccessfulAuth(data.token, data.user);
+  }
 
-    // Prompt user with plan selection right after signup
-    setIsPlanModalOpen(true);
+  async function loginWithOAuth(provider: "google" | "apple" | "x", payload?: { email?: string; full_name?: string; provider_id?: string }) {
+    const res = await fetch(`${backendUrl}/api/v1/auth/oauth`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider,
+        provider_id: payload?.provider_id,
+        email: payload?.email,
+        full_name: payload?.full_name,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.detail || `Failed to authenticate with ${provider.toUpperCase()}`);
+    }
+    const data = await res.json();
+    handleSuccessfulAuth(data.token, data.user);
+  }
+
+  async function sendPhoneOtp(phoneNumber: string) {
+    const res = await fetch(`${backendUrl}/api/v1/auth/phone/send-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone_number: phoneNumber }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.detail || "Failed to transmit SMS verification code");
+    }
+    return await res.json();
+  }
+
+  async function verifyPhoneOtp(phoneNumber: string, otpCode: string, fullName?: string) {
+    const res = await fetch(`${backendUrl}/api/v1/auth/phone/verify-otp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        phone_number: phoneNumber,
+        otp_code: otpCode,
+        full_name: fullName,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(data?.detail || "Invalid or expired verification code");
+    }
+    const data = await res.json();
+    handleSuccessfulAuth(data.token, data.user);
   }
 
   async function updatePlan(planId: "starter" | "pro" | "enterprise") {
@@ -146,7 +191,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     } finally {
       setIsPlanModalOpen(false);
-      // Execute the pending review action if waiting
       if (pendingReviewAction) {
         const action = pendingReviewAction;
         setPendingReviewAction(null);
@@ -182,6 +226,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         closePlanModal: () => setIsPlanModalOpen(false),
         login,
         signup,
+        loginWithOAuth,
+        sendPhoneOtp,
+        verifyPhoneOtp,
         updatePlan,
         logout,
         pendingReviewAction,
@@ -200,4 +247,3 @@ export function useAuth() {
   }
   return context;
 }
-
