@@ -12,21 +12,39 @@ export interface UserProfile {
   created_at: string;
 }
 
+export interface AuditHistoryItem {
+  id: string;
+  name: string;
+  verdict: string;
+  ai_percentage: number;
+  real_percentage: number;
+  preview_url: string;
+  timestamp: string;
+  details?: unknown;
+}
+
 interface AuthContextType {
   user: UserProfile | null;
   token: string | null;
   isAuthModalOpen: boolean;
   isPlanModalOpen: boolean;
+  isHistoryModalOpen: boolean;
+  history: AuditHistoryItem[];
   openAuthModal: () => void;
   closeAuthModal: () => void;
   openPlanModal: () => void;
   closePlanModal: () => void;
+  openHistoryModal: () => void;
+  closeHistoryModal: () => void;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, full_name: string, organization?: string) => Promise<void>;
   loginWithOAuth: (provider: "google" | "apple" | "x", payload?: { email?: string; full_name?: string; provider_id?: string }) => Promise<void>;
   sendPhoneOtp: (phoneNumber: string) => Promise<{ status: string; message: string; demo_otp?: string }>;
   verifyPhoneOtp: (phoneNumber: string, otpCode: string, fullName?: string) => Promise<void>;
   updatePlan: (planId: "starter" | "pro" | "enterprise") => Promise<void>;
+  addHistoryItem: (item: AuditHistoryItem) => Promise<void>;
+  deleteHistoryItem: (itemId: string) => Promise<void>;
+  clearHistory: () => Promise<void>;
   logout: () => void;
   pendingReviewAction: (() => void) | null;
   setPendingReviewAction: (action: (() => void) | null) => void;
@@ -37,21 +55,31 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const backendUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const STORAGE_TOKEN_KEY = "son_ai_auth_token";
 const STORAGE_USER_KEY = "son_ai_auth_user";
+const STORAGE_HISTORY_KEY = "son_ai_auth_history";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [history, setHistory] = useState<AuditHistoryItem[]>([]);
   const [pendingReviewAction, setPendingReviewAction] = useState<(() => void) | null>(null);
 
   useEffect(() => {
     try {
       const savedToken = localStorage.getItem(STORAGE_TOKEN_KEY);
       const savedUser = localStorage.getItem(STORAGE_USER_KEY);
+      const savedHistory = localStorage.getItem(STORAGE_HISTORY_KEY);
+
+      if (savedHistory) {
+        setHistory(JSON.parse(savedHistory));
+      }
+
       if (savedToken && savedUser) {
         setToken(savedToken);
         setUser(JSON.parse(savedUser));
+        // Verify user and fetch latest history
         fetch(`${backendUrl}/api/v1/auth/me`, {
           headers: { Authorization: `Bearer ${savedToken}` },
         })
@@ -60,6 +88,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (freshUser) {
               setUser(freshUser);
               localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(freshUser));
+            }
+          })
+          .catch(() => {});
+
+        fetch(`${backendUrl}/api/v1/auth/history`, {
+          headers: { Authorization: `Bearer ${savedToken}` },
+        })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((freshHistory) => {
+            if (Array.isArray(freshHistory)) {
+              setHistory(freshHistory);
+              localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(freshHistory));
             }
           })
           .catch(() => {});
@@ -76,6 +116,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(newUser));
     setIsAuthModalOpen(false);
     setIsPlanModalOpen(true);
+
+    // Fetch user history upon login
+    fetch(`${backendUrl}/api/v1/auth/history`, {
+      headers: { Authorization: `Bearer ${newToken}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((freshHistory) => {
+        if (Array.isArray(freshHistory)) {
+          setHistory(freshHistory);
+          localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(freshHistory));
+        }
+      })
+      .catch(() => {});
   }
 
   async function login(email: string, password: string) {
@@ -199,6 +252,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // --- Specimen Audit History Actions ---
+  async function addHistoryItem(item: AuditHistoryItem) {
+    // 1. Update local state
+    setHistory((prev) => {
+      const filtered = prev.filter((p) => p.id !== item.id);
+      const updated = [item, ...filtered].slice(0, 100);
+      try {
+        localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // 2. Sync with backend if signed in
+    if (token) {
+      try {
+        const res = await fetch(`${backendUrl}/api/v1/auth/history`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(item),
+        });
+        if (res.ok) {
+          const fresh = await res.json();
+          setHistory(fresh);
+          localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(fresh));
+        }
+      } catch {}
+    }
+  }
+
+  async function deleteHistoryItem(itemId: string) {
+    // 1. Update local state immediately for responsive UI
+    setHistory((prev) => {
+      const updated = prev.filter((p) => p.id !== itemId);
+      try {
+        localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+
+    // 2. Sync with backend
+    if (token) {
+      try {
+        const res = await fetch(`${backendUrl}/api/v1/auth/history/${encodeURIComponent(itemId)}`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.ok) {
+          const fresh = await res.json();
+          setHistory(fresh);
+          localStorage.setItem(STORAGE_HISTORY_KEY, JSON.stringify(fresh));
+        }
+      } catch {}
+    }
+  }
+
+  async function clearHistory() {
+    setHistory([]);
+    try {
+      localStorage.removeItem(STORAGE_HISTORY_KEY);
+    } catch {}
+
+    if (token) {
+      try {
+        await fetch(`${backendUrl}/api/v1/auth/history`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch {}
+    }
+  }
+
   function logout() {
     if (token) {
       fetch(`${backendUrl}/api/v1/auth/logout`, {
@@ -208,9 +335,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setToken(null);
     setUser(null);
+    setHistory([]);
     setPendingReviewAction(null);
     localStorage.removeItem(STORAGE_TOKEN_KEY);
     localStorage.removeItem(STORAGE_USER_KEY);
+    localStorage.removeItem(STORAGE_HISTORY_KEY);
   }
 
   return (
@@ -220,16 +349,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         token,
         isAuthModalOpen,
         isPlanModalOpen,
+        isHistoryModalOpen,
+        history,
         openAuthModal: () => setIsAuthModalOpen(true),
         closeAuthModal: () => setIsAuthModalOpen(false),
         openPlanModal: () => setIsPlanModalOpen(true),
         closePlanModal: () => setIsPlanModalOpen(false),
+        openHistoryModal: () => setIsHistoryModalOpen(true),
+        closeHistoryModal: () => setIsHistoryModalOpen(false),
         login,
         signup,
         loginWithOAuth,
         sendPhoneOtp,
         verifyPhoneOtp,
         updatePlan,
+        addHistoryItem,
+        deleteHistoryItem,
+        clearHistory,
         logout,
         pendingReviewAction,
         setPendingReviewAction,

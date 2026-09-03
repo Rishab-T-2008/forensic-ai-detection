@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 
 export function UserNav() {
-  const { user, openAuthModal, openPlanModal, logout } = useAuth();
+  const { user, openAuthModal, openPlanModal, openHistoryModal, history, logout } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   if (!user) {
@@ -51,6 +51,33 @@ export function UserNav() {
           <div className="dropdown-actions" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
             <button
               type="button"
+              className="history-menu-btn"
+              style={{
+                padding: "8px 12px",
+                background: "rgba(59, 130, 246, 0.1)",
+                border: "1px solid rgba(59, 130, 246, 0.25)",
+                borderRadius: "6px",
+                color: "#1d4ed8",
+                font: "600 11px ui-sans-serif, sans-serif",
+                cursor: "pointer",
+                textAlign: "center",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+              onClick={() => {
+                openHistoryModal();
+                setDropdownOpen(false);
+              }}
+            >
+              <span>🗂️ Specimen History</span>
+              <span style={{ background: "#2563eb", color: "#fff", padding: "1px 6px", borderRadius: "10px", fontSize: "10px" }}>
+                {history.length}
+              </span>
+            </button>
+
+            <button
+              type="button"
               className="upgrade-plan-btn"
               style={{
                 padding: "8px 12px",
@@ -69,6 +96,7 @@ export function UserNav() {
             >
               ⭐ Upgrade / Change Plan
             </button>
+
             <button
               type="button"
               className="sign-out-btn"

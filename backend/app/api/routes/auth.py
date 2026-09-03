@@ -9,7 +9,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -53,6 +53,17 @@ class PhoneVerifyOtpRequest(BaseModel):
     full_name: str | None = Field(default=None, max_length=100)
 
 
+class AuditHistoryItem(BaseModel):
+    id: str = Field(..., max_length=100)
+    name: str = Field(..., max_length=200)
+    verdict: str = Field(..., max_length=50)
+    ai_percentage: int = Field(default=0, ge=0, le=100)
+    real_percentage: int = Field(default=0, ge=0, le=100)
+    preview_url: str | None = Field(default=None, max_length=1000000)
+    timestamp: str = Field(..., max_length=100)
+    details: dict[str, Any] | None = None
+
+
 class UserProfile(BaseModel):
     id: str
     email: str
@@ -81,7 +92,6 @@ def _verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
     return secrets.compare_digest(calculated_hash, hash_hex)
 
 
-# Constant dummy hash used to neutralize timing attacks when an email does not exist
 _DUMMY_SALT = "00" * 16
 _DUMMY_HASH = hashlib.pbkdf2_hmac("sha256", b"dummy_password_timing_defense", bytes.fromhex(_DUMMY_SALT), 100_000).hex()
 TOKEN_TTL_SECONDS = 7 * 86400  # 7 days
@@ -106,7 +116,6 @@ class UserStore:
                 except Exception:
                     self._users = {}
             else:
-                # Seed default demo account for instant testing if not configured
                 salt_hex, hash_hex = _hash_password("password123")
                 demo_email = "analyst@forensics.org"
                 self._users[demo_email] = {
@@ -119,6 +128,7 @@ class UserStore:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "salt": salt_hex,
                     "hash": hash_hex,
+                    "history": [],
                 }
                 self._save_locked()
 
@@ -132,6 +142,20 @@ class UserStore:
     def _prune_expired_tokens(self, now: float) -> None:
         self._tokens = {k: v for k, v in self._tokens.items() if v[1] > now}
         self._phone_otps = {k: v for k, v in self._phone_otps.items() if v[2] > now}
+
+    def _get_email_by_token_locked(self, token: str | None) -> str:
+        if not token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication token missing.")
+        clean_token = token.replace("Bearer ", "").strip()
+        token_entry = self._tokens.get(clean_token)
+        now = time.time()
+        if not token_entry or token_entry[1] < now:
+            self._tokens.pop(clean_token, None)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired or invalid token.")
+        email = token_entry[0]
+        if email not in self._users:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account not found.")
+        return email
 
     def signup(self, req: UserSignupRequest) -> AuthResponse:
         email = req.email.lower().strip()
@@ -157,6 +181,7 @@ class UserStore:
                 "salt": salt_hex,
                 "hash": hash_hex,
                 "auth_provider": "email",
+                "history": [],
             }
             self._users[email] = user_data
             self._save_locked()
@@ -182,7 +207,6 @@ class UserStore:
         with self._lock:
             user = self._users.get(email)
             if not user:
-                # Constant-time dummy check to prevent timing attack enumeration
                 _verify_password(req.password, _DUMMY_SALT, _DUMMY_HASH)
                 rate_limiter.record_auth_failure(ip)
                 raise HTTPException(
@@ -220,7 +244,6 @@ class UserStore:
         if provider == "twitter":
             provider = "x"
 
-        # Deterministic identifier
         if req.email:
             email = req.email.lower().strip()
         else:
@@ -246,6 +269,7 @@ class UserStore:
                     "salt": salt_hex,
                     "hash": hash_hex,
                     "auth_provider": provider,
+                    "history": [],
                 }
                 self._save_locked()
 
@@ -316,6 +340,7 @@ class UserStore:
                     "salt": salt_hex,
                     "hash": hash_hex,
                     "auth_provider": "phone",
+                    "history": [],
                 }
                 self._save_locked()
 
@@ -343,27 +368,8 @@ class UserStore:
             self._tokens.pop(clean_token, None)
 
     def get_current_user(self, token: str | None) -> UserProfile:
-        if not token:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication token missing.",
-            )
-        clean_token = token.replace("Bearer ", "").strip()
         with self._lock:
-            token_entry = self._tokens.get(clean_token)
-            now = time.time()
-            if not token_entry or token_entry[1] < now:
-                self._tokens.pop(clean_token, None)
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session expired or invalid token.",
-                )
-            email = token_entry[0]
-            if email not in self._users:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Session expired or invalid token.",
-                )
+            email = self._get_email_by_token_locked(token)
             u = self._users[email]
             return UserProfile(
                 id=u["id"],
@@ -376,19 +382,8 @@ class UserStore:
             )
 
     def update_plan(self, token: str | None, plan_id: str) -> UserProfile:
-        if not token:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
-        clean_token = token.replace("Bearer ", "").strip()
         with self._lock:
-            token_entry = self._tokens.get(clean_token)
-            now = time.time()
-            if not token_entry or token_entry[1] < now:
-                self._tokens.pop(clean_token, None)
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired.")
-            email = token_entry[0]
-            if email not in self._users:
-                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found.")
-
+            email = self._get_email_by_token_locked(token)
             plans = {
                 "starter": ("Free Community Starter", 25),
                 "pro": ("Pro Forensic Analyst", 500),
@@ -410,6 +405,39 @@ class UserStore:
                 scans_remaining=u["scans_remaining"],
                 created_at=u["created_at"],
             )
+
+    # --- Specimen Audit & Review History Methods ---
+    def get_history(self, token: str | None) -> list[dict]:
+        with self._lock:
+            email = self._get_email_by_token_locked(token)
+            return self._users[email].get("history", [])
+
+    def add_history_item(self, token: str | None, item: AuditHistoryItem) -> list[dict]:
+        with self._lock:
+            email = self._get_email_by_token_locked(token)
+            hist = self._users[email].setdefault("history", [])
+            # Deduplicate by item id
+            hist = [h for h in hist if h.get("id") != item.id]
+            hist.insert(0, item.model_dump())
+            # Cap at 100 history items per account
+            self._users[email]["history"] = hist[:100]
+            self._save_locked()
+            return self._users[email]["history"]
+
+    def delete_history_item(self, token: str | None, item_id: str) -> list[dict]:
+        with self._lock:
+            email = self._get_email_by_token_locked(token)
+            hist = self._users[email].get("history", [])
+            self._users[email]["history"] = [h for h in hist if h.get("id") != item_id]
+            self._save_locked()
+            return self._users[email]["history"]
+
+    def clear_history(self, token: str | None) -> dict[str, str]:
+        with self._lock:
+            email = self._get_email_by_token_locked(token)
+            self._users[email]["history"] = []
+            self._save_locked()
+            return {"status": "ok", "message": "All review history successfully cleared."}
 
 
 class PlanUpdateRequest(BaseModel):
@@ -448,6 +476,26 @@ def phone_verify_otp(request: PhoneVerifyOtpRequest) -> AuthResponse:
 @router.post("/update-plan", response_model=UserProfile)
 def update_plan(request: PlanUpdateRequest, authorization: str | None = Header(default=None)) -> UserProfile:
     return store.update_plan(authorization, request.plan_id)
+
+
+@router.get("/history", response_model=list[AuditHistoryItem])
+def get_history(authorization: str | None = Header(default=None)) -> list[dict]:
+    return store.get_history(authorization)
+
+
+@router.post("/history", response_model=list[AuditHistoryItem])
+def add_history(item: AuditHistoryItem, authorization: str | None = Header(default=None)) -> list[dict]:
+    return store.add_history_item(authorization, item)
+
+
+@router.delete("/history/{item_id}", response_model=list[AuditHistoryItem])
+def delete_history_item(item_id: str, authorization: str | None = Header(default=None)) -> list[dict]:
+    return store.delete_history_item(authorization, item_id)
+
+
+@router.delete("/history")
+def clear_history(authorization: str | None = Header(default=None)) -> dict[str, str]:
+    return store.clear_history(authorization)
 
 
 @router.post("/logout")

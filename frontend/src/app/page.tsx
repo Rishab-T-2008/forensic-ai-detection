@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { AuthProvider } from "@/context/AuthContext";
+import { AuthProvider, useAuth, type AuditHistoryItem } from "@/context/AuthContext";
 import { AuthModal } from "@/components/AuthModal";
 import { PlanSelectionModal } from "@/components/PlanSelectionModal";
+import { AuditHistoryModal } from "@/components/AuditHistoryModal";
 import { UserNav } from "@/components/UserNav";
 import { InteractiveDemoVideo } from "@/components/InteractiveDemoVideo";
 import { SideBySideComparator } from "@/components/SideBySideComparator";
@@ -18,41 +19,37 @@ import { ImageAssistant } from "@/components/ImageAssistant";
 import { CreativeUtilitySuite } from "@/components/CreativeUtilitySuite";
 import type { DetectionResponse } from "@/types/detection";
 
-interface AuditHistoryItem {
-  id: string;
-  name: string;
-  previewUrl: string;
-  result: DetectionResponse;
-  timestamp: string;
-}
-
 function ForensicWorkbench() {
+  const { history, addHistoryItem, deleteHistoryItem, openHistoryModal } = useAuth();
   const [workbenchMode, setWorkbenchMode] = useState<"single" | "comparator" | "anime">("single");
   const [result, setResult] = useState<DetectionResponse | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
-  const [recentScans, setRecentScans] = useState<AuditHistoryItem[]>([]);
 
   function handleResult(newResult: DetectionResponse) {
     setResult(newResult);
     if (previewUrl) {
-      setRecentScans((prev) => {
-        const item: AuditHistoryItem = {
-          id: String(Date.now()),
-          name: file?.name || "Specimen",
-          previewUrl,
-          result: newResult,
-          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        };
-        const filtered = prev.filter((p) => p.previewUrl !== previewUrl);
-        return [item, ...filtered].slice(0, 6);
-      });
+      const item: AuditHistoryItem = {
+        id: String(Date.now()),
+        name: file?.name || "Specimen",
+        verdict: newResult.verdict,
+        ai_percentage: newResult.ai_percentage,
+        real_percentage: newResult.real_percentage,
+        preview_url: previewUrl,
+        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        details: newResult,
+      };
+      void addHistoryItem(item);
     }
   }
 
   function loadRecentScan(item: AuditHistoryItem) {
-    setResult(item.result);
-    setPreviewUrl(item.previewUrl);
+    if (item.details) {
+      setResult(item.details as DetectionResponse);
+    }
+    if (item.preview_url) {
+      setPreviewUrl(item.preview_url);
+    }
   }
 
   return (
@@ -135,38 +132,57 @@ function ForensicWorkbench() {
           <SideBySideComparator />
         ) : (
           <>
-            {/* Feature 5: Recent Scans Audit Log Strip */}
-            {recentScans.length > 0 && (
+            {/* Feature 5: Recent Scans Audit Log Strip with Interactive Management */}
+            {history.length > 0 && (
               <div className="recent-scans-strip">
                 <div className="recent-scans-head">
-                  <span>🕒 RECENT SPECIMEN AUDIT LOG ({recentScans.length})</span>
-                  <button
-                    type="button"
-                    onClick={() => setRecentScans([])}
-                    style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: "11px" }}
-                  >
-                    Clear Log
-                  </button>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span>🕒 SPECIMEN AUDIT LOG ({history.length})</span>
+                    <button
+                      type="button"
+                      className="manage-history-btn"
+                      onClick={openHistoryModal}
+                      title="Open full audit history manager"
+                    >
+                      🗂️ View & Manage All
+                    </button>
+                  </div>
                 </div>
                 <div className="recent-scans-list">
-                  {recentScans.map((item) => {
-                    const isAi = item.result.verdict === "likely_ai";
+                  {history.slice(0, 10).map((item) => {
+                    const isAi = item.verdict === "likely_ai" || (item.ai_percentage && item.ai_percentage >= 50);
                     return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        className="recent-scan-chip"
-                        onClick={() => loadRecentScan(item)}
-                        title={`Click to reload audit for ${item.name}`}
-                      >
-                        <img src={item.previewUrl} alt={item.name} className="scan-chip-thumb" />
-                        <span style={{ maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {item.name}
-                        </span>
-                        <span className={`scan-chip-verdict ${isAi ? "ai" : "real"}`}>
-                          {isAi ? `AI ${item.result.ai_percentage}%` : `Real ${item.result.real_percentage}%`}
-                        </span>
-                      </button>
+                      <div key={item.id} className="recent-scan-chip-wrapper">
+                        <button
+                          type="button"
+                          className="recent-scan-chip"
+                          onClick={() => loadRecentScan(item)}
+                          title={`Click to reload audit for ${item.name}`}
+                        >
+                          {item.preview_url ? (
+                            <img src={item.preview_url} alt={item.name} className="scan-chip-thumb" />
+                          ) : (
+                            <span className="scan-chip-icon">🔬</span>
+                          )}
+                          <span style={{ maxWidth: "120px", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {item.name}
+                          </span>
+                          <span className={`scan-chip-verdict ${isAi ? "ai" : "real"}`}>
+                            {isAi ? `AI ${item.ai_percentage}%` : `Real ${item.real_percentage}%`}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="chip-delete-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void deleteHistoryItem(item.id);
+                          }}
+                          title="Delete this record"
+                        >
+                          ✕
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -252,6 +268,7 @@ function ForensicWorkbench() {
         <ImageAssistant file={file} result={result} />
         <AuthModal />
         <PlanSelectionModal />
+        <AuditHistoryModal onSelectAudit={loadRecentScan} />
       </div>
     </main>
   );
