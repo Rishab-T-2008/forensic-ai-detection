@@ -44,14 +44,24 @@ def health() -> dict[str, str]:
 @app.get("/download-pdf")
 def download_pdf():
     """Direct one-click download endpoint for the Codebase File Navigation Guide PDF."""
-    pdf_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../Project_Codebase_File_Guide.pdf"))
-    if not os.path.exists(pdf_path):
-        pdf_path = "/Users/rishabt/Documents/1/ai-detector/Project_Codebase_File_Guide.pdf"
-    return FileResponse(
-        pdf_path,
-        media_type="application/pdf",
-        filename="Project_Codebase_File_Guide.pdf",
-    )
+    from fastapi import HTTPException
+    from pathlib import Path
+
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    candidate_paths = [
+        base_dir / "Project_Codebase_File_Guide.pdf",
+        base_dir.parent / "Project_Codebase_File_Guide.pdf",
+        Path("/Users/rishabt/Documents/1/ai-detector/Project_Codebase_File_Guide.pdf"),
+    ]
+
+    for p in candidate_paths:
+        if p.is_file():
+            return FileResponse(
+                str(p.resolve()),
+                media_type="application/pdf",
+                filename="Project_Codebase_File_Guide.pdf",
+            )
+    raise HTTPException(status_code=404, detail="File guide PDF not found.")
 
 
 @app.get("/api/v1/billing/status")

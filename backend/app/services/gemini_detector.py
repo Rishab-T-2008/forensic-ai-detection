@@ -172,17 +172,26 @@ class GeminiScoreDetector:
             ast.Sub: operator.sub,
             ast.Mult: operator.mul,
             ast.Div: operator.truediv,
-            ast.Pow: operator.pow,
             ast.Mod: operator.mod,
             ast.USub: operator.neg,
         }
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            if abs(node.value) > 1e12:
+                raise ValueError("Number exceeds safety bound")
             return node.value
-        if isinstance(node, ast.BinOp) and type(node.op) in math_ops:
-            return math_ops[type(node.op)](
-                GeminiScoreDetector._eval_math_node(node.left),
-                GeminiScoreDetector._eval_math_node(node.right),
-            )
+        if isinstance(node, ast.BinOp):
+            if isinstance(node.op, ast.Pow):
+                left_val = GeminiScoreDetector._eval_math_node(node.left)
+                right_val = GeminiScoreDetector._eval_math_node(node.right)
+                # Defensive constraint against exponential calculation CPU hangs
+                if abs(right_val) > 50 or abs(left_val) > 10_000:
+                    raise ValueError("Exponentiation exceeds safety limits")
+                return left_val ** right_val
+            if type(node.op) in math_ops:
+                return math_ops[type(node.op)](
+                    GeminiScoreDetector._eval_math_node(node.left),
+                    GeminiScoreDetector._eval_math_node(node.right),
+                )
         if isinstance(node, ast.UnaryOp) and type(node.op) in math_ops:
             return math_ops[type(node.op)](GeminiScoreDetector._eval_math_node(node.operand))
         raise ValueError("Unsupported math node")

@@ -321,9 +321,9 @@ async def detect_image(
 
 @router.post("/question", response_model=ImageQuestionResponse)
 async def ask_about_image(
-    question: str = Form(...),
+    question: str = Form(..., min_length=1, max_length=2000),
     upload: UploadFile | None = File(default=None),
-    context: str | None = Form(default=None),
+    context: str | None = Form(default=None, max_length=2000),
     settings: Settings = Depends(get_settings),
 ) -> ImageQuestionResponse:
     image = None
@@ -405,6 +405,20 @@ async def extract_image_text(
     )
 
 
+def _safe_download_filename(filename: str | None, prefix: str = "sanitized_") -> str:
+    """Sanitize filenames to prevent CRLF header injection and path traversal."""
+    import re
+    from pathlib import Path
+    if not filename:
+        return f"{prefix}image.jpg"
+    base = Path(filename).name
+    # Strip non-alphanumeric, newlines, and control characters
+    clean = re.sub(r"[^a-zA-Z0-9._-]", "_", base).strip("_")
+    if not clean:
+        clean = "image.jpg"
+    return f"{prefix}{clean}"
+
+
 @router.post("/sanitize-metadata")
 async def sanitize_image_metadata(
     upload: UploadFile = File(...),
@@ -429,10 +443,11 @@ async def sanitize_image_metadata(
         buf = io.BytesIO()
         clean_img.save(buf, format="JPEG", quality=95)
         clean_bytes = buf.getvalue()
+        safe_fn = _safe_download_filename(upload.filename, "sanitized_")
         return Response(
             content=clean_bytes,
             media_type="image/jpeg",
-            headers={"Content-Disposition": f'attachment; filename="sanitized_{upload.filename or "image.jpg"}"'},
+            headers={"Content-Disposition": f'attachment; filename="{safe_fn}"'},
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to sanitize metadata: {str(e)}")
@@ -456,7 +471,7 @@ class SceneLookupResponse(BaseModel):
 
 
 class ShowSearchRequest(BaseModel):
-    query: str
+    query: str = Field(..., min_length=1, max_length=500)
 
 
 @router.post("/show-info", response_model=SceneLookupResponse)

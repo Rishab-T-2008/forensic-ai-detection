@@ -7,26 +7,56 @@ from fastapi import HTTPException, Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
 
 
-class RateLimiter:
-    """In-memory sliding window rate limiter per client IP."""
+from fastapi.responses import JSONResponse
 
-    def __init__(self) -> None:
+TRUSTED_PROXIES = {"127.0.0.1", "::1", "localhost", "0.0.0.0"}
+
+
+class RateLimiter:
+    """In-memory sliding window rate limiter per client IP with DoS bounds and trusted proxy handling."""
+
+    def __init__(self, max_tracked_ips: int = 10_000) -> None:
         self._lock = threading.Lock()
         self._requests: dict[str, list[float]] = {}
         self._auth_failures: dict[str, list[float]] = {}
         self._lockouts: dict[str, float] = {}
+        self._max_tracked_ips = max_tracked_ips
+        self._last_cleanup = time.time()
 
     def get_client_ip(self, request: Request) -> str:
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        client = request.client
-        return client.host if client else "127.0.0.1"
+        """Extract client IP, verifying X-Forwarded-For only if peer is a trusted reverse proxy."""
+        peer_ip = request.client.host if request.client else "127.0.0.1"
+        if peer_ip in TRUSTED_PROXIES:
+            forwarded = request.headers.get("x-forwarded-for")
+            if forwarded:
+                # Take the client IP from the forwarded chain
+                client_candidate = forwarded.split(",")[0].strip()
+                if client_candidate:
+                    return client_candidate
+            real_ip = request.headers.get("x-real-ip")
+            if real_ip:
+                return real_ip.strip()
+        return peer_ip
+
+    def _prune_stale_locked(self, now: float) -> None:
+        """Periodic cleanup to guarantee zero memory leaks or unbounded growth under DoS."""
+        if now - self._last_cleanup < 300:  # Prune every 5 minutes
+            return
+        self._last_cleanup = now
+        # Clean requests older than 120 seconds
+        cutoff_req = now - 120
+        self._requests = {k: [t for t in v if t > cutoff_req] for k, v in self._requests.items() if any(t > cutoff_req for t in v)}
+        # Clean auth failures older than 15 minutes
+        cutoff_auth = now - 900
+        self._auth_failures = {k: [t for t in v if t > cutoff_auth] for k, v in self._auth_failures.items() if any(t > cutoff_auth for t in v)}
+        # Clean expired lockouts
+        self._lockouts = {k: v for k, v in self._lockouts.items() if v > now}
 
     def is_locked_out(self, ip: str) -> bool:
         with self._lock:
+            now = time.time()
             lock_until = self._lockouts.get(ip, 0)
-            if time.time() < lock_until:
+            if now < lock_until:
                 return True
             if lock_until:
                 del self._lockouts[ip]
@@ -35,6 +65,9 @@ class RateLimiter:
     def record_auth_failure(self, ip: str) -> None:
         now = time.time()
         with self._lock:
+            self._prune_stale_locked(now)
+            if len(self._auth_failures) >= self._max_tracked_ips:
+                self._auth_failures.clear()
             history = self._auth_failures.setdefault(ip, [])
             history.append(now)
             # Retain only attempts within the last 15 minutes (900 seconds)
@@ -60,6 +93,9 @@ class RateLimiter:
             window = 60
 
         with self._lock:
+            self._prune_stale_locked(now)
+            if len(self._requests) >= self._max_tracked_ips:
+                self._requests.clear()
             key = f"{ip}:{path[:18]}"
             history = self._requests.setdefault(key, [])
             history = [t for t in history if t > now - window]
@@ -84,11 +120,21 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith("/api/v1"):
             ip = rate_limiter.get_client_ip(request)
             if rate_limiter.is_locked_out(ip):
-                raise HTTPException(
+                return JSONResponse(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="IP temporarily locked out due to repeated failed authentication attempts. Try again in 15 minutes.",
+                    content={
+                        "detail": "IP temporarily locked out due to repeated failed authentication attempts. Try again in 15 minutes."
+                    },
+                    headers={"Retry-After": "900"},
                 )
-            rate_limiter.check_rate_limit(ip, request.url.path)
+            try:
+                rate_limiter.check_rate_limit(ip, request.url.path)
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail},
+                    headers=exc.headers or {"Retry-After": "60"},
+                )
 
         response: Response = await call_next(request)
 
