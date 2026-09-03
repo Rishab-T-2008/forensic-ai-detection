@@ -3654,3 +3654,309 @@ h1 {
   background: rgba(28, 106, 74, 0.12);
   color: var(--green);
 }
+
+/* ==========================================================================
+   Plan Selection Modal & Pricing Cards Styles
+   ========================================================================== */
+.plan-modal-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 860px;
+  background: #0d1612;
+  color: #e5e7eb;
+  border: 1px solid #234133;
+  border-radius: 14px;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(74, 222, 128, 0.15);
+  padding: 32px 30px;
+  animation: slideUpFade 0.24s ease-out;
+  max-height: 92vh;
+  overflow-y: auto;
+}
+
+.plan-modal-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.plan-badge {
+  display: inline-block;
+  font: 700 9px ui-monospace, monospace;
+  letter-spacing: 0.15em;
+  color: #4ade80;
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.3);
+  padding: 3px 10px;
+  border-radius: 20px;
+  margin-bottom: 8px;
+}
+
+.plan-modal-header h2 {
+  font: 400 28px Georgia, serif;
+  color: #f9fafb;
+  margin: 0 0 8px;
+}
+
+.plan-modal-sub {
+  font-size: 13px;
+  line-height: 1.5;
+  color: #9ca3af;
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.pricing-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+@media (max-width: 768px) {
+  .pricing-cards-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.pricing-card {
+  position: relative;
+  background: #13221b;
+  border: 1px solid #1f392c;
+  border-radius: 10px;
+  padding: 22px 18px;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pricing-card:hover {
+  border-color: #3b7357;
+  transform: translateY(-2px);
+  background: #172a22;
+}
+
+.pricing-card.is-selected {
+  border-color: #4ade80;
+  box-shadow: 0 0 0 2px rgba(74, 222, 128, 0.35), 0 10px 24px rgba(0, 0, 0, 0.4);
+  background: #182e25;
+}
+
+.pricing-card.is-featured {
+  border-color: #f97316;
+}
+
+.pricing-card.is-featured.is-selected {
+  border-color: #f97316;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.4), 0 10px 24px rgba(0, 0, 0, 0.4);
+}
+
+.featured-ribbon {
+  position: absolute;
+  top: -10px;
+  right: 14px;
+  background: #f97316;
+  color: #fff;
+  font: 700 9px ui-monospace, monospace;
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(249, 115, 22, 0.4);
+}
+
+.plan-tier-tag {
+  font: 700 9px ui-monospace, monospace;
+  color: #9ca3af;
+  letter-spacing: 0.1em;
+  margin-bottom: 4px;
+}
+
+.plan-tier-tag.pro {
+  color: #f97316;
+}
+
+.plan-tier-tag.enterprise {
+  color: #38bdf8;
+}
+
+.pricing-card h3 {
+  font: 600 18px ui-sans-serif, sans-serif;
+  color: #f3f4f6;
+  margin: 0 0 8px;
+}
+
+.plan-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.plan-price-row .price {
+  font: 700 26px Georgia, serif;
+  color: #4ade80;
+}
+
+.pricing-card.is-featured .plan-price-row .price {
+  color: #f97316;
+}
+
+.plan-price-row .period {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.plan-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: #9ca3af;
+  margin-bottom: 14px;
+  min-height: 32px;
+}
+
+.plan-features {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 18px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 11px;
+  color: #d1d5db;
+}
+
+.plan-features li {
+  line-height: 1.35;
+}
+
+.plan-select-btn {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 6px;
+  border: 1px solid #234133;
+  background: #1a3328;
+  color: #e5e7eb;
+  font: 600 11px ui-sans-serif, sans-serif;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.plan-select-btn:hover {
+  background: #254b3c;
+  border-color: #4ade80;
+}
+
+.plan-select-btn.active {
+  background: #4ade80;
+  color: #0c130f;
+  border-color: #4ade80;
+  font-weight: 700;
+}
+
+.plan-select-btn.pro.active {
+  background: #f97316;
+  color: #ffffff;
+  border-color: #f97316;
+}
+
+.plan-modal-footer {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+  border-top: 1px solid #1f392c;
+  padding-top: 18px;
+}
+
+.guarantee-note {
+  font: 11px ui-monospace, monospace;
+  color: #9ca3af;
+}
+
+.plan-confirm-action-btn {
+  padding: 12px 28px;
+  background: linear-gradient(135deg, #16a34a, #22c55e);
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  font: 700 13px ui-sans-serif, sans-serif;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 4px 18px rgba(34, 197, 94, 0.35);
+  transition: all 0.2s ease;
+}
+
+.plan-confirm-action-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(34, 197, 94, 0.5);
+  background: linear-gradient(135deg, #22c55e, #4ade80);
+  color: #0c130f;
+}
+
+/* ==========================================================================
+   Staged Specimen Review Bar
+   ========================================================================== */
+.staged-review-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 16px 20px;
+  background: rgba(23, 34, 28, 0.04);
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+}
+
+.staged-file-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 12px ui-monospace, monospace;
+  color: var(--ink);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.staged-file-meta .filename {
+  font-weight: 700;
+  color: var(--green);
+}
+
+.staged-actions-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.review-specimen-btn {
+  padding: 12px 24px;
+  background: var(--green);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  font: 700 13px ui-sans-serif, sans-serif;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 4px 14px var(--green-glow);
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.review-specimen-btn:hover {
+  background: #14532d;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px var(--green-glow);
+}
+
+.review-specimen-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}

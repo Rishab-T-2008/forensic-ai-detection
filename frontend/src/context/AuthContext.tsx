@@ -16,11 +16,17 @@ interface AuthContextType {
   user: UserProfile | null;
   token: string | null;
   isAuthModalOpen: boolean;
+  isPlanModalOpen: boolean;
   openAuthModal: () => void;
   closeAuthModal: () => void;
+  openPlanModal: () => void;
+  closePlanModal: () => void;
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, full_name: string, organization?: string) => Promise<void>;
+  updatePlan: (planId: "starter" | "pro" | "enterprise") => Promise<void>;
   logout: () => void;
+  pendingReviewAction: (() => void) | null;
+  setPendingReviewAction: (action: (() => void) | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,6 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isPlanModalOpen, setIsPlanModalOpen] = useState(false);
+  const [pendingReviewAction, setPendingReviewAction] = useState<(() => void) | null>(null);
 
   useEffect(() => {
     try {
@@ -75,6 +83,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_TOKEN_KEY, data.token);
     localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(data.user));
     setIsAuthModalOpen(false);
+
+    // If there is a pending review, open the plan choosing screen
+    if (pendingReviewAction) {
+      setIsPlanModalOpen(true);
+    }
   }
 
   async function signup(email: string, password: string, full_name: string, organization?: string) {
@@ -98,11 +111,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_TOKEN_KEY, data.token);
     localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(data.user));
     setIsAuthModalOpen(false);
+
+    // Prompt user with plan selection right after signup
+    setIsPlanModalOpen(true);
+  }
+
+  async function updatePlan(planId: "starter" | "pro" | "enterprise") {
+    if (!token) return;
+    try {
+      const res = await fetch(`${backendUrl}/api/v1/auth/update-plan`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ plan_id: planId }),
+      });
+      if (res.ok) {
+        const updatedUser = await res.json();
+        setUser(updatedUser);
+        localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(updatedUser));
+      }
+    } catch {
+      if (user) {
+        const localPlans = {
+          starter: { tier: "Free Community Starter", scans: 25 },
+          pro: { tier: "Pro Forensic Analyst", scans: 500 },
+          enterprise: { tier: "Enterprise Lab Tier", scans: 5000 },
+        };
+        const p = localPlans[planId] || localPlans.pro;
+        const updated = { ...user, tier: p.tier, scans_remaining: p.scans };
+        setUser(updated);
+        localStorage.setItem(STORAGE_USER_KEY, JSON.stringify(updated));
+      }
+    } finally {
+      setIsPlanModalOpen(false);
+      // Execute the pending review action if waiting
+      if (pendingReviewAction) {
+        const action = pendingReviewAction;
+        setPendingReviewAction(null);
+        action();
+      }
+    }
   }
 
   function logout() {
+    if (token) {
+      fetch(`${backendUrl}/api/v1/auth/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     setToken(null);
     setUser(null);
+    setPendingReviewAction(null);
     localStorage.removeItem(STORAGE_TOKEN_KEY);
     localStorage.removeItem(STORAGE_USER_KEY);
   }
@@ -113,11 +175,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         token,
         isAuthModalOpen,
+        isPlanModalOpen,
         openAuthModal: () => setIsAuthModalOpen(true),
         closeAuthModal: () => setIsAuthModalOpen(false),
+        openPlanModal: () => setIsPlanModalOpen(true),
+        closePlanModal: () => setIsPlanModalOpen(false),
         login,
         signup,
+        updatePlan,
         logout,
+        pendingReviewAction,
+        setPendingReviewAction,
       }}
     >
       {children}

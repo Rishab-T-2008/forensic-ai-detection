@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AuthProvider } from "@/context/AuthContext";
 import { AuthModal } from "@/components/AuthModal";
+import { PlanSelectionModal } from "@/components/PlanSelectionModal";
 import { UserNav } from "@/components/UserNav";
 import { InteractiveDemoVideo } from "@/components/InteractiveDemoVideo";
 import { SideBySideComparator } from "@/components/SideBySideComparator";
@@ -250,6 +251,7 @@ function ForensicWorkbench() {
 
         <ImageAssistant file={file} result={result} />
         <AuthModal />
+        <PlanSelectionModal />
       </div>
     </main>
   );

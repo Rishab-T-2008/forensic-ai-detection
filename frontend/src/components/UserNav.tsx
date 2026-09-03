@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 
 export function UserNav() {
-  const { user, openAuthModal, logout } = useAuth();
+  const { user, openAuthModal, openPlanModal, logout } = useAuth();
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   if (!user) {
@@ -48,7 +48,27 @@ export function UserNav() {
             <strong>{user.scans_remaining} scans left</strong>
           </div>
 
-          <div className="dropdown-actions">
+          <div className="dropdown-actions" style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            <button
+              type="button"
+              className="upgrade-plan-btn"
+              style={{
+                padding: "8px 12px",
+                background: "rgba(74, 222, 128, 0.12)",
+                border: "1px solid rgba(74, 222, 128, 0.3)",
+                borderRadius: "6px",
+                color: "#166534",
+                font: "600 11px ui-sans-serif, sans-serif",
+                cursor: "pointer",
+                textAlign: "center",
+              }}
+              onClick={() => {
+                openPlanModal();
+                setDropdownOpen(false);
+              }}
+            >
+              ⭐ Upgrade / Change Plan
+            </button>
             <button
               type="button"
               className="sign-out-btn"

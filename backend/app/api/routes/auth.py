@@ -232,6 +232,46 @@ class UserStore:
                 created_at=u["created_at"],
             )
 
+    def update_plan(self, token: str | None, plan_id: str) -> UserProfile:
+        if not token:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+        clean_token = token.replace("Bearer ", "").strip()
+        with self._lock:
+            token_entry = self._tokens.get(clean_token)
+            now = time.time()
+            if not token_entry or token_entry[1] < now:
+                self._tokens.pop(clean_token, None)
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired.")
+            email = token_entry[0]
+            if email not in self._users:
+                raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found.")
+
+            plans = {
+                "starter": ("Free Community Starter", 25),
+                "pro": ("Pro Forensic Analyst", 500),
+                "enterprise": ("Enterprise Lab Tier", 5000),
+            }
+            tier_name, scans = plans.get(plan_id.lower(), ("Pro Forensic Analyst", 500))
+
+            self._users[email]["tier"] = tier_name
+            self._users[email]["scans_remaining"] = scans
+            self._save_locked()
+
+            u = self._users[email]
+            return UserProfile(
+                id=u["id"],
+                email=email,
+                full_name=u["full_name"],
+                organization=u["organization"],
+                tier=u["tier"],
+                scans_remaining=u["scans_remaining"],
+                created_at=u["created_at"],
+            )
+
+
+class PlanUpdateRequest(BaseModel):
+    plan_id: str = Field(..., pattern="^(starter|pro|enterprise)$")
+
 
 store = UserStore()
 
@@ -245,6 +285,11 @@ def signup(request: UserSignupRequest) -> AuthResponse:
 def login(request: UserLoginRequest, http_req: Request) -> AuthResponse:
     ip = rate_limiter.get_client_ip(http_req)
     return store.login(request, ip=ip)
+
+
+@router.post("/update-plan", response_model=UserProfile)
+def update_plan(request: PlanUpdateRequest, authorization: str | None = Header(default=None)) -> UserProfile:
+    return store.update_plan(authorization, request.plan_id)
 
 
 @router.post("/logout")

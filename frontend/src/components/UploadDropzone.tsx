@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { detectImage } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import {
   diagnoseError,
   optimizeImageIfLarge,
@@ -23,9 +24,11 @@ export function UploadDropzone({
   onFile: (file: File) => void;
   result: DetectionResponse | null;
 }) {
+  const { user, openAuthModal, setPendingReviewAction } = useAuth();
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorInfo, setErrorInfo] = useState<ForensicErrorInfo | null>(null);
+  const [stagedFile, setStagedFile] = useState<File | null>(null);
   const [lastFile, setLastFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -45,7 +48,7 @@ export function UploadDropzone({
         if (items[i].type.startsWith("image/")) {
           const pastedFile = items[i].getAsFile();
           if (pastedFile) {
-            void submit(pastedFile);
+            handleStageFile(pastedFile);
             break;
           }
         }
@@ -53,7 +56,7 @@ export function UploadDropzone({
     }
     window.addEventListener("paste", handleGlobalPaste);
     return () => window.removeEventListener("paste", handleGlobalPaste);
-  }, []);
+  }, [user]);
 
   const verdictText = result
     ? result.verdict === "likely_ai"
@@ -61,11 +64,12 @@ export function UploadDropzone({
       : "AI NOT DETECTED"
     : null;
 
-  async function submit(file: File) {
+  // Stage file for review and show preview
+  function handleStageFile(file: File) {
     setErrorInfo(null);
+    setStagedFile(file);
     setLastFile(file);
 
-    // Resilient format validation checking both mime type and common image extensions
     const fileType = (file.type || "").toLowerCase();
     const fileName = (file.name || "").toLowerCase();
     const isValidImage =
@@ -85,18 +89,28 @@ export function UploadDropzone({
       return;
     }
 
-    let targetFile = file;
+    const nextPreviewUrl = URL.createObjectURL(file);
+    setPreviewUrl((previousUrl) => {
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      return nextPreviewUrl;
+    });
+    onPreview(nextPreviewUrl);
+    onFile(file);
+  }
+
+  // Core inference execution
+  async function executeReview(fileToScan: File) {
+    setErrorInfo(null);
+    let targetFile = fileToScan;
     setBusy(true);
 
-    // If file is oversized (> 25MB), try auto-compressing client-side first so it NEVER fails!
-    if (file.size > MAX_BUFFER_SIZE) {
+    if (targetFile.size > MAX_BUFFER_SIZE) {
       try {
         setStatusMessage("Optimizing high-resolution specimen for transmission...");
-        targetFile = await optimizeImageIfLarge(file, 2048, 0.85);
+        targetFile = await optimizeImageIfLarge(targetFile, 2048, 0.85);
       } catch {
-        // If auto-optimization failed and file is still over limit
         if (targetFile.size > MAX_BUFFER_SIZE) {
-          setErrorInfo(diagnoseError("File size exceeds 25 MB", file));
+          setErrorInfo(diagnoseError("File size exceeds 25 MB", targetFile));
           setBusy(false);
           setStatusMessage(null);
           return;
@@ -107,22 +121,31 @@ export function UploadDropzone({
     try {
       setStatusMessage("Extracting Fourier spectra & running neural inference...");
       onFile(targetFile);
-      const nextPreviewUrl = URL.createObjectURL(targetFile);
-      setPreviewUrl((previousUrl) => {
-        if (previousUrl) URL.revokeObjectURL(previousUrl);
-        return nextPreviewUrl;
-      });
-      onPreview(nextPreviewUrl);
-
       const detectionResult = await detectImage(targetFile);
       onResult(detectionResult);
     } catch (cause) {
-      // Exactly specify the diagnostic cause (unstable internet or large image size)
       setErrorInfo(diagnoseError(cause, targetFile));
     } finally {
       setBusy(false);
       setStatusMessage(null);
     }
+  }
+
+  // Triggered when clicking "Review & Verify Specimen"
+  function handleReviewClick() {
+    if (!stagedFile) return;
+
+    if (!user) {
+      // Defer scan until after signup + plan selection
+      const fileToScan = stagedFile;
+      setPendingReviewAction(() => () => {
+        void executeReview(fileToScan);
+      });
+      openAuthModal();
+      return;
+    }
+
+    void executeReview(stagedFile);
   }
 
   async function handleAutoCompressAndRetry() {
@@ -132,7 +155,10 @@ export function UploadDropzone({
     setErrorInfo(null);
     try {
       const compressed = await optimizeImageIfLarge(lastFile, 1600, 0.78);
-      await submit(compressed);
+      handleStageFile(compressed);
+      if (user) {
+        await executeReview(compressed);
+      }
     } catch (err) {
       setErrorInfo(diagnoseError(err, lastFile));
       setBusy(false);
@@ -157,14 +183,15 @@ export function UploadDropzone({
       if (resp.ok) {
         const blob = await resp.blob();
         const file = new File([blob], target.name, { type: target.mime });
-        await submit(file);
+        handleStageFile(file);
+        setBusy(false);
+        setStatusMessage(null);
         return;
       }
     } catch {
-      // Fall back to programmatic canvas generator if fetch is unavailable
+      // Fall back to programmatic canvas generator
     }
 
-    // Programmatic high-fidelity fallback generator
     const canvas = document.createElement("canvas");
     canvas.width = 400;
     canvas.height = 400;
@@ -195,8 +222,10 @@ export function UploadDropzone({
       canvas.toBlob((blob) => {
         if (blob) {
           const sampleFile = new File([blob], target.name, { type: target.mime });
-          void submit(sampleFile);
+          handleStageFile(sampleFile);
         }
+        setBusy(false);
+        setStatusMessage(null);
       }, "image/jpeg", 0.92);
     } else {
       const grad = ctx.createLinearGradient(0, 0, 400, 400);
@@ -214,10 +243,18 @@ export function UploadDropzone({
       canvas.toBlob((blob) => {
         if (blob) {
           const sampleFile = new File([blob], target.name, { type: target.mime });
-          void submit(sampleFile);
+          handleStageFile(sampleFile);
         }
+        setBusy(false);
+        setStatusMessage(null);
       }, "image/png");
     }
+  }
+
+  function handleReset() {
+    setStagedFile(null);
+    setPreviewUrl(null);
+    setErrorInfo(null);
   }
 
   return (
@@ -235,7 +272,7 @@ export function UploadDropzone({
         event.preventDefault();
         setDragging(false);
         const file = event.dataTransfer.files[0];
-        if (file) void submit(file);
+        if (file) handleStageFile(file);
       }}
     >
       <input
@@ -245,7 +282,7 @@ export function UploadDropzone({
         hidden
         onChange={(event) => {
           const file = event.target.files?.[0];
-          if (file) void submit(file);
+          if (file) handleStageFile(file);
         }}
       />
 
@@ -264,17 +301,52 @@ export function UploadDropzone({
               }}
             />
           </div>
-          <div className="preview-meta">
-            <strong>Active Inspection Target</strong>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => inputRef.current?.click()}
-              disabled={busy}
-            >
-              Analyze another image
-            </button>
-          </div>
+
+          {!result && stagedFile && (
+            <div className="staged-review-bar">
+              <div className="staged-file-meta">
+                <span>📁 <span className="filename">{stagedFile.name}</span></span>
+                <span>• {(stagedFile.size / 1024).toFixed(1)} KB</span>
+                <span>• {stagedFile.type || "image/jpeg"}</span>
+              </div>
+
+              <div className="staged-actions-row">
+                <button
+                  type="button"
+                  className="review-specimen-btn"
+                  onClick={handleReviewClick}
+                  disabled={busy}
+                >
+                  {busy ? "🔬 Analyzing Forensic Telemetry..." : "🔬 Review & Verify Specimen"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => inputRef.current?.click()}
+                  disabled={busy}
+                >
+                  Change Image
+                </button>
+              </div>
+            </div>
+          )}
+
+          {result && (
+            <div className="preview-meta">
+              <strong>Active Inspection Target</strong>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => {
+                  handleReset();
+                  inputRef.current?.click();
+                }}
+                disabled={busy}
+              >
+                Analyze another image
+              </button>
+            </div>
+          )}
         </>
       ) : (
         <>
@@ -388,7 +460,7 @@ export function UploadDropzone({
               <button
                 type="button"
                 className="error-action-btn retry"
-                onClick={() => submit(lastFile)}
+                onClick={() => handleStageFile(lastFile)}
               >
                 ⚡ Re-attempt Scan Now
               </button>
